@@ -56,3 +56,5 @@ Temporary Items
 *.obj
 *.pch
 *.ipch
+*.exe
+*.ilk
