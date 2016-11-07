@@ -504,7 +504,14 @@ void CCodeInspectDlg::OnBnClickedButtonLoadtemplate()
 		this->m_MatTemplate = cv::imread(this->m_strTemplateImagePath.GetBuffer(), 0);
 		this->m_strSrcImgPath.ReleaseBuffer();
 	}
-	PaintOnIDC(this->m_MatTemplate.data, this->m_MatTemplate.cols, this->m_MatSrc.rows, IDC_STATIC_TEMPLATEIMG);
+	PaintOnIDC(this->m_MatTemplate.data, this->m_MatTemplate.cols, this->m_MatTemplate.rows, IDC_STATIC_TEMPLATEIMG);
+
+	cv::Mat matSobelDst,SobelShow;
+	cv::Sobel(this->m_MatTemplate, matSobelDst, CV_32F, 1, 1);
+	cv::normalize(matSobelDst, matSobelDst, 0.0,255.0, cv::NORM_MINMAX);
+	matSobelDst.convertTo(SobelShow, CV_8U);
+	cv::imwrite("SobelTemplate.bmp", SobelShow);
+	PaintOnIDC(SobelShow.data, SobelShow.cols, SobelShow.rows, IDC_STATIC_PROCESSIMG);
 }
 
 
@@ -513,12 +520,33 @@ void CCodeInspectDlg::OnBnClickedButtonTemplatematch()
 	// TODO:  在此添加控件通知处理程序代码
 	if ((!this->m_MatSrc.data) || (!this->m_MatTemplate.data)||(this->m_MatSrc.cols<this->m_MatTemplate.cols)||(this->m_MatSrc.rows<this->m_MatTemplate.rows))
 		return;
-
+	cv::Mat GaussMatSrc,GaussMatTemplate;
+	cv::GaussianBlur(this->m_MatTemplate, GaussMatTemplate, cvSize(3, 3), 1, 0);
+	cv::GaussianBlur(this->m_MatSrc, GaussMatSrc, cvSize(3, 3), 1, 0);
 	cv::Mat resultMat(this->m_MatSrc.rows - this->m_MatTemplate.rows, this->m_MatSrc.cols - this->m_MatTemplate.cols, CV_32FC1);
-
-	cv::matchTemplate(this->m_MatSrc, this->m_MatTemplate, resultMat, CV_TM_CCOEFF_NORMED);
+	cv::Mat srcCopy;
+	LARGE_INTEGER lFreq,time_start,time_end;
+	double dtime;
+	QueryPerformanceFrequency(&lFreq);
+	QueryPerformanceCounter(&time_start);
+	
+	cv::matchTemplate(GaussMatSrc, GaussMatTemplate, resultMat, CV_TM_CCOEFF_NORMED);
 	double fMax, fMin;
 	cv::Point MaxLoc, MinLoc;
 	cv::minMaxLoc(resultMat, &fMin, &fMax, &MinLoc, &MaxLoc);
+	QueryPerformanceCounter(&time_end);
+	dtime = (double)(time_end.QuadPart - time_start.QuadPart) / (double)lFreq.QuadPart;
+	char textTime[255];
+	sprintf_s(textTime, "%4f", dtime);
+	GetDlgItem(IDC_EDIT_PROCESSTIME)->SetWindowText(textTime);
+	memset(textTime, 0, 5 * sizeof(char));
+	sprintf_s(textTime, "%4f", fMax);
+	GetDlgItem(IDC_EDIT_PROCESSRESULT)->SetWindowText(textTime);
+	srcCopy = GaussMatSrc(cv::Rect(MaxLoc.x, MaxLoc.y, this->m_MatTemplate.cols, this->m_MatTemplate.rows)).clone();
+	//cv::rectangle(srcCopy, cv::Rect(MaxLoc.x, MaxLoc.y, this->m_MatTemplate.cols, this->m_MatTemplate.rows), cvScalar(255, 255, 255), 2, 8, 0);
+	PaintOnIDC(srcCopy.data, srcCopy.cols, srcCopy.rows, IDC_STATIC_DSTIMG);
+	PaintOnIDC(GaussMatSrc.data, GaussMatSrc.cols, GaussMatSrc.rows, IDC_STATIC_SRCIMG);
+	PaintOnIDC(GaussMatTemplate.data, GaussMatTemplate.cols, GaussMatTemplate.rows, IDC_STATIC_SRCIMG);
 
+	cv::imwrite("MatchDst.bmp", srcCopy);
 }
