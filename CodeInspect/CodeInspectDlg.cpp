@@ -7,14 +7,69 @@
 #include "CodeInspectDlg.h"
 #include "afxdialogex.h"
 #include "math.h"
+#include <fstream>
 #include "GraphUtils.h"
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
 
 
 // 用于应用程序“关于”菜单项的 CAboutDlg 对话框
+int FindTerminalPoint(cv::InputArray _curve, cv::Point* TerminalPoint, int outputLength ,int nStepFreq,bool is_closed = 0)
+{
+	cv::Mat curve = _curve.getMat();
+	int count = curve.checkVector(2);
+	int depth = curve.depth();
+	CV_Assert(count >= 0 && (depth == CV_32F || depth == CV_32S));
+	double perimeter = 0;
 
+	int i, j = 0;
+	const int N = 16;
+	float buf[N];
+
+	if (count <= 3)
+		return 0.;
+	int nStep = count>nStepFreq ? count / nStepFreq : 1 ;
+	bool is_float = depth == CV_32F;
+	int last = 0;
+
+	const cv::Point* pti = curve.ptr<cv::Point>();
+	const cv::Point2f* ptf = curve.ptr<cv::Point2f>();
+
+	cv::Point2f prev = is_float ? ptf[last] : cv::Point2f((float)pti[last].x, (float)pti[last].y);
+	cv::Point2f aft = is_float ? ptf[nStep] : cv::Point2f((float)pti[nStep+nStep].x, (float)pti[nStep+nStep].y);
+	int calPointCount = 0;
+	int current = nStep;
+	bool *calPointArray = new bool[count];
+	memset(calPointArray, 0, sizeof(bool)*count);
+	calPointArray[0] = true;
+	int OutputPoint = 0,prevPos = last,next = nStep;
+	for (int i = nStep; i < count+nStep;i+=nStep)
+	{
+		if (i > count)
+			break;
+		cv::Point2f p = is_float ? ptf[current] : cv::Point2f((float)pti[current].x, (float)pti[current].y);
+		if ((prev.x - p.x)*(aft.x - p.x) + ( prev.y -p.y)*(aft.y - p.y) > 0)
+		{
+			if (OutputPoint<outputLength)
+			{
+				TerminalPoint[OutputPoint].x = prevPos;
+				TerminalPoint[OutputPoint].y = next;
+				++OutputPoint;
+			}
+		}
+		
+		prevPos = current;
+		current = (current + nStep) % count;
+		prev = p;
+		next = (current + nStep)%count;
+		aft = is_float ? ptf[next] : cv::Point2f((float)pti[next].x, (float)pti[next].y);
+	}
+	
+
+	return OutputPoint;
+}
 class CAboutDlg : public CDialogEx
 {
 public:
@@ -459,12 +514,14 @@ void CCodeInspectDlg::OnBnClickedButtonPcolor()
 void CCodeInspectDlg::OnBnClickedButtonArctest()
 {
 	// TODO:  在此添加控件通知处理程序代码
+	float ArcRThre = 1000.0;
 	cv::Mat img = cv::imread(this->m_strSrcImgPath.GetBuffer(), 0);
 	cv::Mat thredst;
+	CString strOut;
 	this->m_strSrcImgPath.ReleaseBuffer();
 	thredst.create(cvSize(img.cols, img.rows), CV_8U);
 	try{
-		cv::threshold(img, thredst, 70,255,CV_THRESH_BINARY);
+		cv::threshold(img, thredst, 100,255,CV_THRESH_BINARY_INV);
 	}
 	catch (cv::Exception &e)
 	{
@@ -472,7 +529,54 @@ void CCodeInspectDlg::OnBnClickedButtonArctest()
 	}
 	cv::imwrite("arcThre.bmp", thredst);
 	PaintOnIDC(thredst.data, thredst.cols, thredst.rows, IDC_STATIC_PROCESSIMG);
+	std::vector<std::vector<cv::Point>> contours;
+	cv::findContours(thredst, contours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_NONE, cv::Point(-1, -1));
+	std::vector<std::vector<cv::Point>> ::iterator ipc;
+	ipc = contours.begin();
+	std::fstream fArcInfo;
+	
+	fArcInfo.open("ArcInfo.csv", std::fstream::_Nocreate || std::fstream::app);
+	
+	if (fArcInfo.fail())
+	{
+		fArcInfo.open("ArcInfo.csv", std::fstream::app);
+		fArcInfo << "X,Y,R,arcLength,Area,Size" << std::endl;
+	}
+	int indx = 0;
+	while (ipc != contours.end())
+	{
+		double arcL = cv::arcLength(*ipc,1);
+		cv::RotatedRect contoursR = cv::minAreaRect(*ipc);
+		cv::Rect ArcROI = cv::boundingRect(*ipc);
+		cv::Point2f ArcCenter(0.0,0.0);
+		float ArcR;
+		cv::minEnclosingCircle(*ipc, ArcCenter, ArcR);
+		if (ArcR < ArcRThre)
+		{
+			++indx;
+			++ipc;
+			continue;
+		}
+		cv::Mat ROIofArc(cvSize(ArcROI.width,ArcROI.height), CV_8U);
+		ROIofArc.setTo(0);
+		cv::drawContours(ROIofArc, contours, indx, cvScalar(255, 255, 255),CV_FILLED,1,cv::noArray(),2147483647,cvPoint(-ArcROI.x,-ArcROI.y));
+		strOut.Format("PartImg%d.bmp",indx);
+		cv::imwrite(strOut.GetBuffer(), ROIofArc);
+		strOut.ReleaseBuffer();
+		long contourA = cv::countNonZero(ROIofArc);
+		cv::Point* output = new cv::Point[10];
+		FindTerminalPoint(*ipc, output, 10, 100, true);
+	
+
+
+
+		fArcInfo << ArcCenter.x << ',' << ArcCenter.y << ',' << ArcR << ',' << arcL << ',' << contourA << ','<<(ipc->end() - ipc->begin())<<std::endl;
+		
+		
+	}
+	fArcInfo.close();
 }
+
 
 
 void CCodeInspectDlg::OnBnClickedButtonLoadtemplate()
